@@ -1,0 +1,50 @@
+/* ── Variables ─────────────────────────────────────────────── */
+:root {
+  --bg:       #0a0a0a;
+  --surface:  #111111;
+  --surface2: #1a1a1a;
+  --border:   #222222;
+  --green:    #1db954;
+  --red:      #ff4444;
+  --yellow:   #ffd700;
+  --text:     #f0f0f0;
+  --muted:    #666666;
+}
+
+/* ── Reset ──────────────────────────────────────────────────── */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* ── Base ───────────────────────────────────────────────────── */
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: "DM Mono", monospace;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+/* Subtle animated grid background */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(29, 185, 84, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(29, 185, 84, 0.03) 1px, transparent 1px);
+  background-size: 40px 40px;
+  animation: gridScroll 20s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes gridScroll {
+  from { transform: translateY(0); }
+  to   { transform: translateY(40px); }
+}
+
