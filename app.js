@@ -190,21 +190,26 @@ function initPlayer() {
 }
 
 function playTrack(uri) {
-  console.log("playTrack called, uri:", uri, "deviceId:", state.deviceId);
-  fetch("https://api.spotify.com/v1/me/player/play?device_id=" + state.deviceId, {
+  // Transfer playback to the browser device first, then play
+  fetch("https://api.spotify.com/v1/me/player", {
     method:  "PUT",
     headers: {
       Authorization:  "Bearer " + state.accessToken,
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({ uris: [uri] })
+    body: JSON.stringify({ device_ids: [state.deviceId], play: false })
   })
-  .then(function(res) {
-    console.log("playTrack response status:", res.status);
-    return res.text();
+  .then(function() {
+    return fetch("https://api.spotify.com/v1/me/player/play?device_id=" + state.deviceId, {
+      method:  "PUT",
+      headers: {
+        Authorization:  "Bearer " + state.accessToken,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ uris: [uri] })
+    });
   })
-  .then(function(body) {
-    if (body) console.log("playTrack response body:", body);
+  .then(function() {
     setTimeout(function() {
       if (state.player) state.player.seek(30000);
     }, 800);
@@ -322,14 +327,7 @@ function nextRound() {
   state.currentTrack = state.tracks[idx];
 
   resetRoundUI();
-  playTrack(state.currentTrack.uri);
-  startTimer();
-
-  setTimeout(function() {
-    if (state.roundActive) showHint();
-  }, HINT_DELAY_MS);
-
-  $("guessInput").focus();
+  showStartButton();
 }
 
 function endGame() {
@@ -373,6 +371,7 @@ function resetRoundUI() {
   $("resultBox").innerHTML       = "";
   $("trackReveal").style.display = "none";
   $("nextBtn").style.display     = "none";
+  $("startRoundBtn").style.display = "none";
   $("skipBtn").style.display     = "";
   $("hintBox").style.display     = "none";
   $("guessArea").style.display   = "flex";
@@ -382,6 +381,27 @@ function resetRoundUI() {
   var artUrl = track.album && track.album.images && track.album.images[0]
     ? track.album.images[0].url : "";
   $("albumArt").src = artUrl;
+}
+
+function showStartButton() {
+  $("startRoundBtn").style.display = "block";
+  $("guessArea").style.display     = "none";
+  $("skipBtn").style.display       = "none";
+}
+
+function startRound() {
+  $("startRoundBtn").style.display = "none";
+  $("guessArea").style.display     = "flex";
+  $("skipBtn").style.display       = "";
+
+  playTrack(state.currentTrack.uri);
+  startTimer();
+
+  setTimeout(function() {
+    if (state.roundActive) showHint();
+  }, HINT_DELAY_MS);
+
+  $("guessInput").focus();
 }
 
 // ── Timer ─────────────────────────────────────────────────────
@@ -583,6 +603,7 @@ function shuffle(arr) {
 // ── Event listeners ───────────────────────────────────────────
 
 $("connectBtn").addEventListener("click",   connectToSpotify);
+$("startRoundBtn").addEventListener("click", startRound);
 $("guessBtn").addEventListener("click",     submitGuess);
 $("skipBtn").addEventListener("click",      skipSong);
 $("nextBtn").addEventListener("click",      nextRound);
