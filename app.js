@@ -146,72 +146,17 @@ function spotifyGet(url) {
     });
 }
 
-// Fetch liked songs, top tracks, and recently played — combine and dedupe
 function loadAllTracks() {
-  setLoadingMessage("Loading your library...");
-
-  var seen   = {};
-  var tracks = [];
-
-  function addTrack(track) {
-    if (track && track.uri && track.preview_url && !seen[track.uri]) {
-      seen[track.uri] = true;
-      tracks.push(track);
-    }
-  }
-
-  // 1. Liked songs (paginated up to MAX_TRACKS)
-  function fetchLiked(url, done) {
-    spotifyGet(url)
-      .then(function(data) {
-        (data.items || []).forEach(function(item) { addTrack(item.track); });
-        if (data.next && tracks.length < MAX_TRACKS) {
-          fetchLiked(data.next, done);
-        } else {
-          done();
-        }
-      })
-      .catch(function() { done(); }); // if it fails, move on
-  }
-
-  // 2. Top tracks (up to 100 — two pages of 50)
-  function fetchTopTracks(done) {
-    var urls = [
-      "https://api.spotify.com/v1/me/top/tracks?limit=50&time_range=long_term",
-      "https://api.spotify.com/v1/me/top/tracks?limit=50&time_range=medium_term"
-    ];
-    var pending = urls.length;
-    urls.forEach(function(url) {
-      spotifyGet(url)
-        .then(function(data) {
-          (data.items || []).forEach(function(track) { addTrack(track); });
-        })
-        .catch(function() {})
-        .then(function() { if (--pending === 0) done(); });
+  setLoadingMessage("Fetching playlists...");
+  spotifyGet("https://api.spotify.com/v1/me/playlists?limit=50")
+    .then(function(data) {
+      data.items.forEach(function(p) { console.log(p.name); });
+      setLoadingMessage("Done — check the console.");
+    })
+    .catch(function(err) {
+      showScreen("screenSetup");
+      showError("setupError", "API error: " + err.message);
     });
-  }
-
-  // 3. Recently played (up to 50)
-  function fetchRecentTracks(done) {
-    spotifyGet("https://api.spotify.com/v1/me/player/recently-played?limit=50")
-      .then(function(data) {
-        (data.items || []).forEach(function(item) { addTrack(item.track); });
-      })
-      .catch(function() {})
-      .then(done);
-  }
-
-  // Run all three in sequence, then start the game
-  fetchLiked("https://api.spotify.com/v1/me/tracks?limit=50", function() {
-    setLoadingMessage("Loading top tracks...");
-    fetchTopTracks(function() {
-      setLoadingMessage("Loading recent plays...");
-      fetchRecentTracks(function() {
-        setLoadingMessage("Starting game...");
-        onTracksLoaded(tracks);
-      });
-    });
-  });
 }
 
 function onTracksLoaded(tracks) {
@@ -538,3 +483,4 @@ $("guessInput").addEventListener("keydown", function(e) {
 
 // ── Boot ──────────────────────────────────────────────────────
 handleAuthCallback();
+
