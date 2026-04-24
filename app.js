@@ -327,7 +327,14 @@ function nextRound() {
   state.currentTrack = state.tracks[idx];
 
   resetRoundUI();
-  showStartButton();
+  playTrack(state.currentTrack.uri);
+  startTimer();
+
+  setTimeout(function() {
+    if (state.roundActive) showHint();
+  }, HINT_DELAY_MS);
+
+  $("guessInput").focus();
 }
 
 function endGame() {
@@ -371,37 +378,21 @@ function resetRoundUI() {
   $("resultBox").innerHTML       = "";
   $("trackReveal").style.display = "none";
   $("nextBtn").style.display     = "none";
-  $("startRoundBtn").style.display = "none";
   $("skipBtn").style.display     = "";
   $("hintBox").style.display     = "none";
   $("guessArea").style.display   = "flex";
   $("visualizer").classList.remove("revealed");
   $("bars").style.display        = "flex";
 
+  // Clear src immediately so the old image never shows unblurred
+  var albumArt = $("albumArt");
+  albumArt.src = "";
+
   var artUrl = track.album && track.album.images && track.album.images[0]
     ? track.album.images[0].url : "";
-  $("albumArt").src = artUrl;
-}
 
-function showStartButton() {
-  $("startRoundBtn").style.display = "block";
-  $("guessArea").style.display     = "none";
-  $("skipBtn").style.display       = "none";
-}
-
-function startRound() {
-  $("startRoundBtn").style.display = "none";
-  $("guessArea").style.display     = "flex";
-  $("skipBtn").style.display       = "";
-
-  playTrack(state.currentTrack.uri);
-  startTimer();
-
-  setTimeout(function() {
-    if (state.roundActive) showHint();
-  }, HINT_DELAY_MS);
-
-  $("guessInput").focus();
+  // Set src on next tick — blur CSS is guaranteed to be applied first
+  setTimeout(function() { albumArt.src = artUrl; }, 0);
 }
 
 // ── Timer ─────────────────────────────────────────────────────
@@ -603,7 +594,6 @@ function shuffle(arr) {
 // ── Event listeners ───────────────────────────────────────────
 
 $("connectBtn").addEventListener("click",   connectToSpotify);
-$("startRoundBtn").addEventListener("click", startRound);
 $("guessBtn").addEventListener("click",     submitGuess);
 $("skipBtn").addEventListener("click",      skipSong);
 $("nextBtn").addEventListener("click",      nextRound);
