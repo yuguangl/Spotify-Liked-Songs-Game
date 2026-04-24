@@ -4,11 +4,11 @@
 
 // ── Configuration ────────────────────────────────────────────
 var CLIENT_ID     = "ddf1c6e913bc4aa1ad89ae8853b20641";
-var SCOPES        = "user-library-read streaming user-read-playback-state user-modify-playback-state user-read-email user-read-private";
+var SCOPES        = "user-library-read user-top-read user-read-recently-played";
 var TOTAL_ROUNDS  = 10;
 var TIMER_SECONDS = 15;
 var HINT_DELAY_MS = 7000;
-var MAX_TRACKS    = 200;
+var MAX_TRACKS    = 200; // max liked songs to fetch (change this to get more/fewer)
 
 // ── Application state ─────────────────────────────────────────
 var state = {
@@ -24,8 +24,7 @@ var state = {
   round:         0,
   correctCount:  0,
   roundActive:   false,
-  player:        null,   // Spotify Web Playback SDK player
-  deviceId:      ""      // SDK device ID assigned by Spotify
+  audio:         null
 };
 
 // ── DOM helpers ───────────────────────────────────────────────
@@ -46,6 +45,11 @@ function showError(id, message) {
 
 function escapeHtml(str) {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function setLoadingMessage(msg) {
+  var el = $("loadingMsg");
+  if (el) el.textContent = msg;
 }
 
 // ── PKCE auth helpers ─────────────────────────────────────────
@@ -93,7 +97,7 @@ function handleAuthCallback() {
   var code   = params.get("code");
   var error  = params.get("error");
 
-  if (error) { showError("setupError", "Spotify auth cancelled or failed: " + error); return; }
+  if (error) { showError("setupError", "Spotify auth cancelled: " + error); return; }
   if (!code) return;
 
   window.history.replaceState({}, document.title, window.location.pathname);
@@ -102,7 +106,7 @@ function handleAuthCallback() {
   if (!verifier) { showError("setupError", "Auth error: verifier missing. Please try again."); return; }
 
   showScreen("screenLoading");
-  setLoadingMessage("Connecting to Spotify...");
+  setLoadingMessage("Authenticating...");
 
   fetch("https://accounts.spotify.com/api/token", {
     method: "POST",
@@ -120,10 +124,10 @@ function handleAuthCallback() {
     if (data.access_token) {
       state.accessToken = data.access_token;
       sessionStorage.removeItem("pkce_verifier");
-      initPlayer();
+      loadAllTracks();
     } else {
       showScreen("screenSetup");
-      showError("setupError", "Auth failed: " + (data.error_description || data.error || "unknown error"));
+      showError("setupError", "Auth failed: " + (data.error_description || data.error || "unknown"));
     }
   })
   .catch(function(err) {
@@ -132,120 +136,110 @@ function handleAuthCallback() {
   });
 }
 
-// ── Spotify Web Playback SDK ──────────────────────────────────
-
-function initPlayer() {
-  setLoadingMessage("Initialising player...");
-
-  // The SDK calls this function when it's ready
-  window.onSpotifyWebPlaybackSDKReady = function() {
-    var player = new window.Spotify.Player({
-      name: "Spotify Song Guesser",
-      getOAuthToken: function(cb) { cb(state.accessToken); },
-      volume: 0.7
-    });
-
-    state.player = player;
-
-    player.addListener("ready", function(data) {
-      state.deviceId = data.device_id;
-      loadTracks();
-    });
-
-    player.addListener("not_ready", function() {
-      showScreen("screenSetup");
-      showError("setupError", "Playback device went offline. Please refresh and try again.");
-    });
-
-    player.addListener("initialization_error", function(e) {
-      showScreen("screenSetup");
-      showError("setupError", "Player failed to initialise: " + e.message);
-    });
-
-    player.addListener("authentication_error", function(e) {
-      showScreen("screenSetup");
-      showError("setupError", "Playback auth error: " + e.message + ". Make sure you have Spotify Premium.");
-    });
-
-    player.addListener("account_error", function(e) {
-      showScreen("screenSetup");
-      showError("setupError", "Spotify Premium is required for playback. (" + e.message + ")");
-    });
-
-    player.connect();
-  };
-
-  // Load the SDK script
-  var script = document.createElement("script");
-  script.src = "https://sdk.scdn.co/spotify-player.js";
-  document.head.appendChild(script);
-}
-
-function playTrack(spotifyUri) {
-  return fetch("https://api.spotify.com/v1/me/player/play?device_id=" + state.deviceId, {
-    method:  "PUT",
-    headers: {
-      Authorization:  "Bearer " + state.accessToken,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({ uris: [spotifyUri] })
-  });
-}
-
-function stopAudio() {
-  if (state.player) state.player.pause();
-}
-
 // ── Spotify API ───────────────────────────────────────────────
 
 function spotifyGet(url) {
-  return fetch(url, { headers: { Authorization: "Bearer " + state.accessToken } });
+  return fetch(url, { headers: { Authorization: "Bearer " + state.accessToken } })
+    .then(function(res) {
+      if (!res.ok) throw new Error("Spotify API error " + res.status);
+      return res.json();
+    });
 }
 
-function loadTracks() {
+// Fetch liked songs, top tracks, and recently played — combine and dedupe
+function loadAllTracks() {
   setLoadingMessage("Loading your library...");
-  var collected = [];
 
-  function fetchPage(url) {
-    spotifyGet(url)
-      .then(function(res) {
-        if (!res.ok) throw new Error("Spotify API returned " + res.status);
-        return res.json();
-      })
-      .then(function(data) {
-        var items = data.items || [];
-        for (var i = 0; i < items.length; i++) {
-          // With the SDK we can play any track — no preview_url filter needed
-          if (items[i].track && items[i].track.uri) collected.push(items[i]);
-        }
-        if (data.next && collected.length < MAX_TRACKS) {
-          fetchPage(data.next);
-        } else {
-          onTracksLoaded(collected);
-        }
-      })
-      .catch(function(err) {
-        showScreen("screenSetup");
-        showError("setupError", "Could not load your library. Try reconnecting. (" + err.message + ")");
-      });
+  var seen   = {};
+  var tracks = [];
+
+  function addTrack(track) {
+    if (track && track.uri && track.preview_url && !seen[track.uri]) {
+      seen[track.uri] = true;
+      tracks.push(track);
+    }
   }
 
-  fetchPage("https://api.spotify.com/v1/me/tracks?limit=50");
+  // 1. Liked songs (paginated up to MAX_TRACKS)
+  function fetchLiked(url, done) {
+    spotifyGet(url)
+      .then(function(data) {
+        (data.items || []).forEach(function(item) { addTrack(item.track); });
+        if (data.next && tracks.length < MAX_TRACKS) {
+          fetchLiked(data.next, done);
+        } else {
+          done();
+        }
+      })
+      .catch(function() { done(); }); // if it fails, move on
+  }
+
+  // 2. Top tracks (up to 100 — two pages of 50)
+  function fetchTopTracks(done) {
+    var urls = [
+      "https://api.spotify.com/v1/me/top/tracks?limit=50&time_range=long_term",
+      "https://api.spotify.com/v1/me/top/tracks?limit=50&time_range=medium_term"
+    ];
+    var pending = urls.length;
+    urls.forEach(function(url) {
+      spotifyGet(url)
+        .then(function(data) {
+          (data.items || []).forEach(function(track) { addTrack(track); });
+        })
+        .catch(function() {})
+        .then(function() { if (--pending === 0) done(); });
+    });
+  }
+
+  // 3. Recently played (up to 50)
+  function fetchRecentTracks(done) {
+    spotifyGet("https://api.spotify.com/v1/me/player/recently-played?limit=50")
+      .then(function(data) {
+        (data.items || []).forEach(function(item) { addTrack(item.track); });
+      })
+      .catch(function() {})
+      .then(done);
+  }
+
+  // Run all three in sequence, then start the game
+  fetchLiked("https://api.spotify.com/v1/me/tracks?limit=50", function() {
+    setLoadingMessage("Loading top tracks...");
+    fetchTopTracks(function() {
+      setLoadingMessage("Loading recent plays...");
+      fetchRecentTracks(function() {
+        setLoadingMessage("Starting game...");
+        onTracksLoaded(tracks);
+      });
+    });
+  });
 }
 
-function onTracksLoaded(collected) {
-  if (collected.length < 3) {
+function onTracksLoaded(tracks) {
+  if (tracks.length < 3) {
     showScreen("screenSetup");
-    showError("setupError", "Not enough liked songs found. Add more songs to your Spotify library and try again.");
+    showError("setupError",
+      "Not enough songs with audio previews found (" + tracks.length + " found). " +
+      "This is a Spotify regional limitation — previews are unavailable in some countries. " +
+      "Try switching your Spotify region or VPN to the US."
+    );
     return;
   }
-  state.tracks = shuffle(collected);
+  state.tracks = shuffle(tracks);
   startGame();
 }
 
-function setLoadingMessage(msg) {
-  var el = $("loadingMsg");
-  if (el) el.textContent = msg;
+// ── Audio ─────────────────────────────────────────────────────
+
+function playPreview(url) {
+  stopAudio();
+  if (!url) return;
+  state.audio = new Audio(url);
+  state.audio.volume = 0.7;
+  state.audio.play().catch(function() {});
+}
+
+function stopAudio() {
+  if (state.audio) { state.audio.pause(); state.audio = null; }
 }
 
 // ── Game lifecycle ────────────────────────────────────────────
@@ -270,20 +264,10 @@ function nextRound() {
   state.roundActive = true;
 
   var idx = pickUnusedTrackIndex();
-  state.currentTrack = state.tracks[idx].track;
+  state.currentTrack = state.tracks[idx];
 
   resetRoundUI();
-
-  // Play via SDK — start 30s in so there's something to hear immediately
-  playTrack(state.currentTrack.uri).catch(function(err) {
-    console.warn("Playback error:", err);
-  });
-
-  // Seek to 30s into the track so it's not always the intro
-  setTimeout(function() {
-    if (state.player) state.player.seek(30000);
-  }, 800);
-
+  playPreview(state.currentTrack.preview_url);
   startTimer();
 
   setTimeout(function() {
@@ -305,9 +289,7 @@ function restartGame() { state.usedIndices = {}; startGame(); }
 
 function logout() {
   stopAudio();
-  if (state.player) { state.player.disconnect(); state.player = null; }
   state.accessToken = "";
-  state.deviceId    = "";
   showScreen("screenSetup");
 }
 
@@ -326,19 +308,19 @@ function pickUnusedTrackIndex() {
 function resetRoundUI() {
   var track = state.currentTrack;
 
-  $("roundNum").textContent     = state.round;
-  $("guessInput").value         = "";
-  $("guessInput").disabled      = false;
-  $("guessInput").className     = "guess-input";
-  $("resultBox").className      = "result-box";
-  $("resultBox").innerHTML      = "";
+  $("roundNum").textContent      = state.round;
+  $("guessInput").value          = "";
+  $("guessInput").disabled       = false;
+  $("guessInput").className      = "guess-input";
+  $("resultBox").className       = "result-box";
+  $("resultBox").innerHTML       = "";
   $("trackReveal").style.display = "none";
-  $("nextBtn").style.display    = "none";
-  $("skipBtn").style.display    = "";
-  $("hintBox").style.display    = "none";
-  $("guessArea").style.display  = "flex";
+  $("nextBtn").style.display     = "none";
+  $("skipBtn").style.display     = "";
+  $("hintBox").style.display     = "none";
+  $("guessArea").style.display   = "flex";
   $("visualizer").classList.remove("revealed");
-  $("bars").style.display       = "flex";
+  $("bars").style.display        = "flex";
 
   var artUrl = track.album && track.album.images && track.album.images[0]
     ? track.album.images[0].url : "";
@@ -384,7 +366,6 @@ function submitGuess() {
   if (!state.roundActive) return;
   var guess = $("guessInput").value.trim();
   if (!guess) return;
-
   if (isCorrectGuess(guess, state.currentTrack.name)) {
     onCorrectGuess();
   } else {
