@@ -17,6 +17,7 @@ var state = {
   usedIndices:   {},
   currentTrack:  null,
   timerInterval: null,
+  hintTimeout:   null,
   timeLeft:      TIMER_SECONDS,
   score:         0,
   streak:        0,
@@ -24,6 +25,7 @@ var state = {
   round:         0,
   correctCount:  0,
   roundActive:   false,
+  currentArtUrl: "",
   player:        null,
   deviceId:      ""
 };
@@ -326,11 +328,12 @@ function nextRound() {
   var idx = pickUnusedTrackIndex();
   state.currentTrack = state.tracks[idx];
 
+  clearTimeout(state.hintTimeout);
   resetRoundUI();
   playTrack(state.currentTrack.uri);
   startTimer();
 
-  setTimeout(function() {
+  state.hintTimeout = setTimeout(function() {
     if (state.roundActive) showHint();
   }, HINT_DELAY_MS);
 
@@ -384,15 +387,13 @@ function resetRoundUI() {
   $("visualizer").classList.remove("revealed");
   $("bars").style.display        = "flex";
 
-  // Clear src immediately so the old image never shows unblurred
-  var albumArt = $("albumArt");
-  albumArt.src = "";
+  // Remove any previously revealed album art
+  var oldImg = $("visualizer").querySelector("img");
+  if (oldImg) oldImg.remove();
 
-  var artUrl = track.album && track.album.images && track.album.images[0]
+  // Store art URL for reveal at end of round
+  state.currentArtUrl = track.album && track.album.images && track.album.images[0]
     ? track.album.images[0].url : "";
-
-  // Set src on next tick — blur CSS is guaranteed to be applied first
-  setTimeout(function() { albumArt.src = artUrl; }, 0);
 }
 
 // ── Timer ─────────────────────────────────────────────────────
@@ -551,7 +552,17 @@ function showTimeoutResult() {
 }
 
 function revealArt() {
-  $("visualizer").classList.add("revealed");
+  var viz = $("visualizer");
+
+  if (state.currentArtUrl) {
+    var img = document.createElement("img");
+    img.src = state.currentArtUrl;
+    img.alt = "Album art";
+    // Insert before the bars div
+    viz.insertBefore(img, $("bars"));
+  }
+
+  viz.classList.add("revealed");
   $("bars").style.display = "none";
 }
 
